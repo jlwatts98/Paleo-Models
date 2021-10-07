@@ -1,0 +1,45 @@
+##### Header #####
+
+# Clear workspace
+rm(list = ls())
+graphics.off()
+
+# Source custom functions
+source("Functions.R")
+
+# Load libraries
+library(arulesViz)
+library(biomod2)
+library(BiodiversityR)
+library(caret)
+library(checkmate)
+library(climateStability)
+library(CoordinateCleaner)
+library(corrplot)
+library(dismo)
+library(dplyr)
+library(fuzzySim)
+library(ggplot2)
+library(ggpubr)
+library(Hmisc)
+library(maps)
+library(maptools)
+library(plotROC)
+library(purrr)
+library(RANN)
+library(raster)
+library(rasterVis)
+library(rgbif)
+library(rgdal)
+library(rgeos)
+library(rlist)
+library(SDMtune)
+library(sp)
+library(spThin)
+library(spatialEco)
+library(spatstat)
+library(terra)
+library(tibble)
+library(tidyverse)
+library(zeallot)
+
