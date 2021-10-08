@@ -21,6 +21,7 @@ triad_SWD_test2 = triad_SWD(par1 = "Asplenium montanum",
 triad_SDM_test2 = triad_SDM(triad_SWD_test2, 1)
 triad_SDM_test2
 
+
 evaluations_test2 = evaluate_triad_models(triad_SDM_test2, clim_crop)
 evaluations_test2
 
