@@ -78,3 +78,44 @@ preds1 = predict_model(retrained1, clim_crop)
 
 raster::plot(preds1[[2]])
 raster::plot(preds1[[3]])
+
+
+
+hyb = hybrid_zone(preds, preds1)
+
+raster::plot(preds[[3]])
+raster::plot(preds[[2]])
+raster::plot(preds1[[2]])
+raster::plot(preds1[[3]])
+raster::plot(hyb)
+
+pred = SDMtune::predict(retrained, data = clim_crop, type = "cloglog")
+h <- list(fc = c("l", "lq", "lh", "lqp", "lqph", "lqpht"), 
+          iter = seq(300, 1100, 200), 
+          reg = seq(0.2, 2, 0.2))
+maxent_model = SDMtune::train(method = "Maxent", data = new_SWD)
+optimum_params = optimizeModel(maxent_model, hypers = h, metric = "auc", 
+                               test = val, pop = 15, gen = 2, seed = 798)
+
+# build new model, collapsing validation back into training
+# Index of the best model in the experiment
+index <- which.max(optimum_params@results$test_AUC)  
+train_val <- mergeSWD(reduced_train, reduced_validation, only_presence = TRUE)
+
+final_model <- SDMtune::train("Maxent", data = train_val, 
+                              fc = optimum_params@results[index, 1], 
+                              reg = optimum_params@results[index, 2],
+                              iter = optimum_params@results[index, 3])
+
+maxent_auc = max(optimum_params@results$test_AUC)
+index
+
+class = class(model_test9[[3]]@model)
+class
+class(a_montanum)
+class(a_montanum$lat)
+flags = clean_coordinates(test, lon = "lon", lat = "lat",
+                          species = "species", 
+                          tests = c("capitals", "centroids", "equal", 
+                                    "gbif", "institutions", "outliers", 
+                                    "seas", "zeros"))
