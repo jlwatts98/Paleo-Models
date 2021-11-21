@@ -34,37 +34,36 @@ completeFun <- function(data, desiredCols) {
 # clean
 clean_pres = function(
   presence,
-  year,
   predictors,
   thin
 ){
   
   # checks
   checkmate::assert_data_frame(presence)
-  checkmate::assert_numeric(year)
   checkmate::assert_flag(thin)
   
-  # clean presence data
-  presence_complete = completeFun(presence, c("lon", "lat"))
-  
-  # remove duplicates
-  presence_dup = presence_complete[!duplicated(presence_complete[c("lon","lat")]),]
-  
-  # remove records before year
-  presence_year = presence_dup %>% filter(year > 1900)
-  
   # coordinate cleaner package
-  flags = clean_coordinates(presence_year, lon = "lon", lat = "lat",
+  flags = clean_coordinates(presence, lon = "lon", lat = "lat",
                             species = "species", 
                             tests = c("capitals", "centroids", "equal", 
                                       "gbif", "institutions", "outliers", 
                                       "seas", "zeros"))
   
   #Exclude problematic records
-  presence_final = presence_year[flags$.summary,]
+  presence_final = presence[flags$.summary,]
+  
+  
+  # clean presence data
+  presence_complete = completeFun(presence_final, c("lon", "lat"))
+  
+  # remove duplicates
+  presence_dup = presence_complete[!duplicated(presence_complete[c("lon","lat")]),]
+  
+  # remove records before year
+  presence_year = presence_dup |> dplyr::filter(year > 1900)
   
   # get rid of metadata
-  presence_xy = presence_final[,c("lon", "lat")]
+  presence_xy = presence_year[,c("lon", "lat")]
   
   # if else statement for thin
   
@@ -106,20 +105,21 @@ get_backgr = function(
   
   # sample randomly from all circles
   samp1 = spsample(pol, samp_num, type = 'random', iter = 25)
+  
   ## Warning in proj4string(obj): CRS object has comment, which is lost in output
   # get unique cells
-  cells = cellFromXY(predictors[[1]], samp1)
+  #cells = cellFromXY(predictors[[1]], samp1)
   
-  cells_unique = unique(cells)
+  #cells_unique = unique(cells)
   
-  xy = xyFromCell(predictors[[1]], cells_unique)
+  #xy = xyFromCell(predictors[[1]], cells_unique)
   
-  spxy = SpatialPoints(xy, proj4string = CRS('+proj=longlat +datum=WGS84'))
-  o = over(spxy, geometry(x))
-  xyInside = xy[!is.na(o), ]
+  #spxy = SpatialPoints(xy, proj4string = CRS('+proj=longlat +datum=WGS84'))
+  #o = over(spxy, geometry(x))
+  #xyInside = xy[!is.na(o), ]
   
   # make into dataframe
-  background = as.data.frame(xyInside)
+  background = as.data.frame(samp1)
   
   # return the result
   return(background)
@@ -193,7 +193,7 @@ model_tune = function(
   
   # tune model by removing correlated variables using jacknife removal
   reduced_variables_model <- reduceVar(default_model, th = threshold, metric = "auc", 
-                                       test = test, permut = 1, use_jk = TRUE)
+                                       test = test, permut = 1, use_jk = T)
   
   # extract new SWD_object from model
   new_SWD = reduced_variables_model@data
@@ -221,7 +221,8 @@ model_tune = function(
   
   # optimize
   optimum_params = optimizeModel(maxent_model, hypers = h, metric = "auc", 
-                                test = val, pop = 15, gen = 2, seed = 798)
+                                test = reduced_validation, 
+                                pop = 15, gen = 2, seed = 798)
   
   # build new model, collapsing validation back into training
   index <- which.max(optimum_params@results$test_AUC)  # Index of the best model in the experiment
@@ -241,7 +242,7 @@ model_tune = function(
   
   # tune model by removing correlated variables using jacknife removal
   reduced_variables_model <- reduceVar(maxnet_model, th = threshold, metric = "auc", 
-                                       test = test, permut = 1, use_jk = TRUE)
+                                       test = test, permut = 1, use_jk = T)
   
   # extract new SWD_object from model
   new_SWD_maxnet = reduced_variables_model@data
@@ -263,12 +264,12 @@ model_tune = function(
   maxnet_model_reduced <- SDMtune::train("Maxnet", data = reduced_train)
   
   # define hyperparameters by which to tune
-  h <- list(fc = c("l", "lq", "lh", "lqp", "lqph", "lqpht"), 
+  h_maxnet <- list(fc = c("l", "lq", "lh", "lqp", "lqph", "lqpht"), 
             reg = seq(0.2, 2, 0.2))
   
   # optimize
-  optimum_params_maxnet = optimizeModel(maxnet_model_reduced, hypers = h, metric = "auc", 
-                                 test = val, pop = 15, gen = 2, seed = 798)
+  optimum_params_maxnet = optimizeModel(maxnet_model_reduced, hypers = h_maxnet, metric = "auc", 
+                                 test = reduced_validation_maxnet, pop = 15, gen = 2, seed = 798)
   
   # build new model, collapsing validation back into training
   index_maxnet <- which.max(optimum_params_maxnet@results$test_AUC)  # Index of the best model in the experiment
@@ -294,6 +295,75 @@ model_tune = function(
   }
   
 }
+
+# maxent only
+model_tune_maxent = function(
+  SWD_object,
+  threshold,
+  predictors
+){
+  
+  # checks
+  checkmate::assert_numeric(threshold)
+  
+  # split model into train and test
+  list = trainValTest(SWD_object, test = 0.2, 
+                      only_presence = TRUE, seed = 25)
+  
+  # define train and test
+  train = list[[1]]
+  test = list[[2]]
+  
+  # run default model
+  default_model = SDMtune::train(method = "Maxent", data = train)
+  
+  # tune model by removing correlated variables using jacknife removal
+  reduced_variables_model <- reduceVar(default_model, th = threshold, metric = "auc", 
+                                       test = test, permut = 1, use_jk = T)
+  
+  # extract new SWD_object from model
+  new_SWD = reduced_variables_model@data
+  
+  # recover testing data via a merge
+  merged_SWD = SDMtune::mergeSWD(new_SWD, test, only_presence = TRUE)
+  
+  # use merged SWD to tune hyperparameters
+  # split into training, validation, and testing sets
+  reduced_list = trainValTest(merged_SWD, val = 0.2, test = 0.2, 
+                              only_presence = TRUE, seed = 61516)
+  
+  # define train, validation, and test
+  reduced_train = reduced_list[[1]]
+  reduced_validation = reduced_list[[2]]
+  reduced_test = reduced_list[[3]]
+  
+  # run a model
+  maxent_model <- SDMtune::train("Maxent", data = reduced_train)
+  
+  # define hyperparameters by which to tune
+  h <- list(fc = c("l", "lq", "lh", "lqp", "lqph", "lqpht"), 
+            iter = seq(300, 1100, 200), 
+            reg = seq(0.2, 2, 0.2))
+  
+  # optimize
+  optimum_params = optimizeModel(maxent_model, hypers = h, metric = "auc", 
+                                 test = reduced_validation, 
+                                 pop = 15, gen = 2, seed = 798)
+  
+  # build new model, collapsing validation back into training
+  index <- which.max(optimum_params@results$test_AUC)  # Index of the best model in the experiment
+  train_val <- mergeSWD(reduced_train, reduced_validation, only_presence = TRUE)
+  
+  final_model <- SDMtune::train("Maxent", data = train_val, 
+                                fc = optimum_params@results[index, 1], 
+                                reg = optimum_params@results[index, 2],
+                                iter = optimum_params@results[index, 3])
+  
+  # return tuned maxent model
+  final_list = list(train_val, reduced_test, final_model)
+  return(final_list)
+}
+  
 
 # a function that get the environment for any model
 
@@ -578,40 +648,281 @@ bin_hybrid_zone = function(
   
 }
 
-hyb = hybrid_zone(preds, preds1)
-
-raster::plot(preds[[3]])
-raster::plot(preds[[2]])
-raster::plot(preds1[[2]])
-raster::plot(preds1[[3]])
-raster::plot(hyb)
-
-pred = SDMtune::predict(retrained, data = clim_crop, type = "cloglog")
-h <- list(fc = c("l", "lq", "lh", "lqp", "lqph", "lqpht"), 
-          iter = seq(300, 1100, 200), 
-          reg = seq(0.2, 2, 0.2))
-maxent_model = SDMtune::train(method = "Maxent", data = new_SWD)
-optimum_params = optimizeModel(maxent_model, hypers = h, metric = "auc", 
-                               test = val, pop = 15, gen = 2, seed = 798)
-
-# build new model, collapsing validation back into training
-# Index of the best model in the experiment
-index <- which.max(optimum_params@results$test_AUC)  
-train_val <- mergeSWD(reduced_train, reduced_validation, only_presence = TRUE)
-
-final_model <- SDMtune::train("Maxent", data = train_val, 
-                              fc = optimum_params@results[index, 1], 
-                              reg = optimum_params@results[index, 2],
-                              iter = optimum_params@results[index, 3])
-
-maxent_auc = max(optimum_params@results$test_AUC)
-index
-
-class = class(model_test9[[3]]@model)
-class
 ##### Predictions Through Time + Niche Comparisons #####
 ##### Climate Stability #####
 
 ##### Niche Distance from Parental Hybrid Zones #####
 
 # schoener's D statistic
+
+
+##### New Zealand Stuff #####
+summ_stats = function(
+  dist_change_out,
+  dem
+){
+  
+  # checks
+  checkmate::assert_list(dist_change_out)
+  
+  # define
+  species = dist_change_out[[1]]
+  fut = dist_change_out[[2]]
+  past = dist_change_out[[3]]
+  
+  # raster math
+  # present area
+  # past area
+  # future area
+  # average elevation
+  # average latitude
+  # change in area
+  
+  # reclassify raster - present, future, past
+  reclass_df = c(0, 0,
+                 1, 1,
+                 2, 0,
+                 3, 1)
+  reclass_m = matrix(reclass_df,
+                     ncol = 2,
+                     byrow = TRUE)
+  pres_pred = reclassify(fut, reclass_m)
+  
+  fut_pred = (fut - pres_pred)/2
+  
+  past_pred = (past - pres_pred)/2
+  
+  
+  # calculate area at each time
+  cell_size = raster::area(pres_pred)
+  
+  pres_cell = cell_size * pres_pred
+  pres_area = cellStats(pres_cell, stat = 'sum')
+  
+  fut_cell = cell_size * fut_pred
+  fut_area = cellStats(fut_cell, stat = 'sum')
+  
+  past_cell = cell_size * past_pred
+  past_area = cellStats(past_cell, stat = 'sum')
+  
+  # calculate average elevation of each time frame
+  
+  pres_cell1 = dem * pres_pred
+  pres_ele = cellStats(pres_cell1, stat = 'mean')
+  
+  fut_cell1 = dem * fut_pred
+  fut_ele = cellStats(fut_cell1, stat = 'mean')
+  
+  past_cell1 = dem * past_pred
+  past_ele = cellStats(past_cell1, stat = 'mean')
+  
+  # calculate average latitude of each time frame
+  pres_dataframe = raster::as.data.frame(pres_pred,xy=TRUE) |>
+    group_by(layer) |>
+    summarise(mean = mean(y))
+  pres_lat = as.numeric(pres_dataframe[2,2])
+  
+  fut_dataframe = raster::as.data.frame(fut_pred,xy=TRUE) |>
+    group_by(layer) |>
+    summarise(mean = mean(y))
+  fut_lat = as.numeric(fut_dataframe[2,2])
+  
+  past_dataframe = raster::as.data.frame(past_pred,xy=TRUE) |>
+    group_by(layer) |>
+    summarise(mean = mean(y))
+  past_lat = as.numeric(past_dataframe[2,2])
+  
+  # return
+  return(list(pres_area, fut_area, past_area, pres_ele, fut_ele, past_ele, pres_lat,
+              fut_lat, past_lat))
+  
+}
+
+# a function that calculates the percent stable, loss,
+# and gain between two time frames
+
+perc_change = function(
+  dist_change
+){
+  
+  # species
+  species = dist_change[[1]]
+  
+  # past to present
+  past_pres = dist_change[[3]]
+  
+  # calculate total area
+  reclass_df = c(0, 0,
+                 1, 1,
+                 2, 1,
+                 3, 1)
+  reclass_m = matrix(reclass_df,
+                     ncol = 2,
+                     byrow = TRUE)
+  past_pres_tot = reclassify(past_pres, reclass_m)
+  
+  # area
+  cell_size = raster::area(past_pres_tot)
+  
+  pptot_cell = cell_size * past_pres_tot
+  pptot_area = cellStats(pptot_cell, stat = 'sum')
+  
+  # calculate stable area
+  reclass_df = c(0, 0,
+                 1, 0,
+                 2, 0,
+                 3, 1)
+  reclass_m = matrix(reclass_df,
+                     ncol = 2,
+                     byrow = TRUE)
+  past_pres_stable = reclassify(past_pres, reclass_m)
+  
+  # area
+  cell_size = raster::area(past_pres_stable)
+  
+  ppstab_cell = cell_size * past_pres_stable
+  ppstab_area = cellStats(ppstab_cell, stat = 'sum')
+  
+  # percent stable
+  pp_stab = ppstab_area/pptot_area * 100
+  
+  # calculate loss area
+  reclass_df = c(0, 0,
+                 1, 0,
+                 2, 1,
+                 3, 0)
+  reclass_m = matrix(reclass_df,
+                     ncol = 2,
+                     byrow = TRUE)
+  past_pres_loss = reclassify(past_pres, reclass_m)
+  
+  # area
+  cell_size = raster::area(past_pres_loss)
+  
+  pploss_cell = cell_size * past_pres_loss
+  pploss_area = cellStats(pploss_cell, stat = 'sum')
+  
+  # percent stable
+  pp_loss = pploss_area/pptot_area * 100
+  
+  # calculate gain area
+  reclass_df = c(0, 0,
+                 1, 1,
+                 2, 0,
+                 3, 0)
+  reclass_m = matrix(reclass_df,
+                     ncol = 2,
+                     byrow = TRUE)
+  past_pres_gain = reclassify(past_pres, reclass_m)
+  
+  # area
+  cell_size = raster::area(past_pres_gain)
+  
+  ppgain_cell = cell_size * past_pres_gain
+  ppgain_area = cellStats(ppgain_cell, stat = 'sum')
+  
+  # percent stable
+  pp_gain = ppgain_area/pptot_area * 100
+  
+  
+  
+  
+  
+  #### present to future
+  pres_fut = dist_change[[2]]
+  
+  # calculate total area
+  reclass_df = c(0, 0,
+                 1, 1,
+                 2, 1,
+                 3, 1)
+  reclass_m = matrix(reclass_df,
+                     ncol = 2,
+                     byrow = TRUE)
+  pres_fut_tot = reclassify(pres_fut, reclass_m)
+  
+  # area
+  cell_size = raster::area(pres_fut_tot)
+  
+  pftot_cell = cell_size * pres_fut_tot
+  pftot_area = cellStats(pftot_cell, stat = 'sum')
+  
+  # calculate stable area
+  reclass_df = c(0, 0,
+                 1, 0,
+                 2, 0,
+                 3, 1)
+  reclass_m = matrix(reclass_df,
+                     ncol = 2,
+                     byrow = TRUE)
+  pres_fut_stable = reclassify(pres_fut, reclass_m)
+  
+  # area
+  cell_size = raster::area(pres_fut_stable)
+  
+  pfstab_cell = cell_size * pres_fut_stable
+  pfstab_area = cellStats(pfstab_cell, stat = 'sum')
+  
+  # percent stable
+  pf_stab = pfstab_area/pftot_area * 100
+  
+  # calculate loss area
+  reclass_df = c(0, 0,
+                 1, 1,
+                 2, 0,
+                 3, 0)
+  reclass_m = matrix(reclass_df,
+                     ncol = 2,
+                     byrow = TRUE)
+  pres_fut_loss = reclassify(pres_fut, reclass_m)
+  
+  # area
+  cell_size = raster::area(pres_fut_loss)
+  
+  pfloss_cell = cell_size * pres_fut_loss
+  pfloss_area = cellStats(pfloss_cell, stat = 'sum')
+  
+  # percent stable
+  pf_loss = pfloss_area/pftot_area * 100
+  
+  # calculate gain area
+  reclass_df = c(0, 0,
+                 1, 0,
+                 2, 1,
+                 3, 0)
+  reclass_m = matrix(reclass_df,
+                     ncol = 2,
+                     byrow = TRUE)
+  pres_fut_gain = reclassify(pres_fut, reclass_m)
+  
+  # area
+  cell_size = raster::area(pres_fut_gain)
+  
+  pfgain_cell = cell_size * pres_fut_gain
+  pfgain_area = cellStats(pfgain_cell, stat = 'sum')
+  
+  # percent stable
+  pf_gain = pfgain_area/pftot_area * 100
+  
+  # return 
+  return(list(species, pp_stab, pp_loss, pp_gain,
+              pf_stab, pf_loss, pf_gain))
+  
+}
+
+get_env_vals = function(
+  cleaned_pres,
+  predictors
+){
+  
+  coordinates(cleaned_pres) = ~ lon + lat
+  projection(cleaned_pres) = CRS('+proj=longlat +datum=WGS84')
+  
+  env_val = raster::extract(predictors, cleaned_pres) |>
+    as_tibble()
+  summ = summarise_all(env_val, mean)
+  
+  # return
+  return(summ)
+  
+}

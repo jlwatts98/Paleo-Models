@@ -768,3 +768,4 @@ maxent_model <- train("Maxent", data = reduced_train)
 presence_thin = SDMtune::thinData(a_montanum, clim_crop[[1]], "lon", "lat")
 
 plot(clim_crop[[1]])
+
